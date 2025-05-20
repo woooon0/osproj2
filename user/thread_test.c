@@ -175,8 +175,9 @@ main(int argc, char *argv[])
     for (i = 0; i < NUM_THREAD; i++) {
         threads[i] = thread_create(thread_basic, (void *)(uint64)i, 0);
     }
+    printf("Thread created\n");
 
-    for (i = 0; i < NUM_THREAD; i++) {
+    for (i = 0; i < NUM_THREAD; i++) { //5번 thread_join
         int ret = thread_join();
         if (ret < 0) {
             printf("Thread %d join failed\n", i);
