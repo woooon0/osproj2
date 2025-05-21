@@ -161,8 +161,13 @@ freeproc(struct proc *p)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   p->trapframe_va = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+  if(p->is_thread){
+    p->pagetable = 0;
+  }
+  else{
+    if(p->pagetable)
+      proc_freepagetable(p->pagetable, p->sz);
+  }
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -276,6 +281,11 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  for(struct proc *t = proc; t < &proc[NPROC]; t++) {
+    if(t->thread_parent == p->thread_parent || t->thread_parent == p) {
+      t->sz = sz;
+    }
+  }
   return 0;
 }
 
@@ -292,7 +302,7 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
-
+  printf("parent pagetable: %p\n", p->pagetable);
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -764,12 +774,18 @@ int clone(void(*fcn)(void*,void*), void *arg1, void *arg2, void *stack){
     p = p->thread_parent;
   }
 
-  // Copy user memory from parent to child.
+  // // Copy user memory from parent to child.
+  // if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  //   freeproc(np);
+  //   release(&np->lock);
+  //   return -1;
+  // }
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+  np->sz = p->sz;
   acquire(&wait_lock);
 
   np->parent = p;
@@ -778,23 +794,24 @@ int clone(void(*fcn)(void*,void*), void *arg1, void *arg2, void *stack){
 
   release(&wait_lock);
 
-  np->sz = p->sz;
-  if (uvmalloc(np->pagetable, np->sz, np->sz + PGSIZE, PTE_W | PTE_R | PTE_U) == 0) {
-    printf("Error: Failed to allocate user stack.\n");
-    release(&np->lock);
-    return -1;
-  }
-  np->sz = np->sz + PGSIZE;
-  stack = (void *)PGROUNDUP((uint64)stack);
-  if ((uint64)stack % PGSIZE != 0) {
-        printf("Error: Stack is not page aligned.\n");
-        release(&np->lock);
-        return -1;
-  }
-  np->trapframe->sp = (uint64)stack+4096;
+  uint64 stack_va = PGROUNDUP((uint64)stack);
+  uvmunmap(np->pagetable, stack_va, 1, 1);
 
+
+  // np->sz = p->sz;
+  // if (uvmalloc(np->pagetable, np->sz, np->sz + PGSIZE, PTE_W | PTE_R | PTE_U) == 0) {
+  //   printf("Error: Failed to allocate user stack.\n");
+  //   release(&np->lock);
+  //   return -1;
+  // }
+  // np->sz += PGSIZE;
+  np->sz = p->sz;
+  mappages(np->pagetable, stack_va, PGSIZE,
+    (uint64)kalloc(), PTE_W|PTE_R|PTE_U);
+  
 
   // // copy saved user registers.
+  
   *(np->trapframe) = *(p->trapframe);
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
@@ -805,18 +822,17 @@ int clone(void(*fcn)(void*,void*), void *arg1, void *arg2, void *stack){
   safestrcpy(np->name, p->name, sizeof(p->name));
   pid = np->pid;
   np->trapframe->a0 = (uint64)arg1;
-  
+  np->trapframe->sp = (uint64)stack_va + PGSIZE;
   np->trapframe->a1 = (uint64)arg2;
-  
-  np->trapframe->ra = (uint64)fcn;
-
-  
+  np->trapframe->epc = (uint64)fcn;
+  np->context.ra = (uint64)forkret;
   np->state = RUNNABLE;
-  
+  // printf("np->trapframe->sp = %p\n", (void *)np->trapframe->sp);
   release(&np->lock);
-
   return pid;
 }
+
+
 
 
 // // Wait for a child process to exit and return its pid.
@@ -879,30 +895,42 @@ int join(void **stack){
     for(np = proc; np < &proc[NPROC]; np++){
       if(np->thread_parent == p && np->is_thread == 1){
       // make sure the child isn't still in exit() or swtch().
-        goto found;
+        acquire(&np->lock);
+        if(np->state == ZOMBIE){
+          // Found one.
+          pid = np->pid;
+          if(stack != 0){
+            sp = np->trapframe->sp;
+            *stack = (void *)sp;
+          }
+          freeproc(np);
+          release(&np->lock);
+          release(&wait_lock);
+          return pid;
+        }
+        release(&np->lock);
+      }
+    }    
+    sleep(p, &wait_lock);  //DOC: wait-sleep
+  }
+  release(&wait_lock);
+  return -1;
+}
+
+void
+tcheck(void){
+  struct proc *p = myproc();
+  for(struct proc *np = proc; np < &proc[NPROC]; np++){
+    if(np->thread_parent == p && np->is_thread == 1){
+      if(np->state == ZOMBIE){
+        printf("Thread %d is dead\n", np->pid);
+      }
+      if(np->state == SLEEPING){
+        printf("Thread %d is sleeping\n", np->pid);
+      }
+      if(np->state == RUNNABLE){
+        printf("Thread %d is runnable\n", np->pid);
       }
     }
-    
-    release(&wait_lock);
-    return -1;
-
-    found:
-    do{
-      if (np->state == ZOMBIE){
-        break;
-      }
-      
-      sleep(p, &wait_lock);  //DOC: wait-sleep
-    } while(0);
-    // Found one.
-    pid = np->pid;
-    sp = np->trapframe->sp;
-    if(stack != 0){
-      *stack = (void *)sp;
-    }
-    freeproc(np);
-    release(&wait_lock);
-    return pid;
-
-  } 
+  }
 }

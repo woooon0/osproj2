@@ -24,6 +24,7 @@ int sleep(int);
 int uptime(void);
 int clone(void (*start_routine)(void*, void*), void *arg1, void *arg2, void *stack);
 int join(void **stack);
+int tcheck(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

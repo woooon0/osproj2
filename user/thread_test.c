@@ -12,7 +12,7 @@ int threads[NUM_THREAD];
 int status; // for test#1, test#3
 int expected[NUM_THREAD]; // for test#2
 
-// test#1
+// // test#1
 void
 thread_basic(void *arg1, void *arg2)
 {
@@ -183,12 +183,14 @@ main(int argc, char *argv[])
             printf("Thread %d join failed\n", i);
             exit(1);
         }
+        printf("Thread %d joined\n", i);
     }
 
     if (status != 1) {
         printf("TEST#1 Failed\n");
         exit(1);
     }
+    tcheck();
     printf("TEST#1 Passed\n");
     
     // printf("\n[TEST#2]\n");
@@ -202,6 +204,8 @@ main(int argc, char *argv[])
     //         printf("Thread %d join failed\n", i);
     //         exit(1);
     //     }
+    //     printf("Thread %d joined\n", i);
+
     // }
 
     // for (i = 0; i < NUM_THREAD; i++) {

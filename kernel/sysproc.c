@@ -47,6 +47,12 @@ sys_sbrk(void)
     return -1;
   return addr;
 }
+uint64
+sys_tcheck(void)
+{
+  tcheck();
+  return 0;
+}
 
 uint64
 sys_sleep(void)
